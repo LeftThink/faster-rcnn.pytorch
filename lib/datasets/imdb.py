@@ -120,7 +120,15 @@ class imdb(object):
       oldx2 = boxes[:, 2].copy()
       boxes[:, 0] = widths[i] - oldx2 - 1
       boxes[:, 2] = widths[i] - oldx1 - 1
-      assert (boxes[:, 2] >= boxes[:, 0]).all()
+    
+      #assert (boxes[:, 2] >= boxes[:, 0]).all()
+      overstep = (boxes[:, 2] >= boxes[:, 0]).all()
+      if not overstep:
+          print("WARNING: cross the border,{}".format(self.image_path_at(i)))
+          for i in range(len(boxes)):
+              if boxes[i][2] < boxes[i][0]:
+                  boxes[i][0] = 0
+
       entry = {'boxes': boxes,
                'gt_overlaps': self.roidb[i]['gt_overlaps'],
                'gt_classes': self.roidb[i]['gt_classes'],
@@ -156,7 +164,7 @@ class imdb(object):
     area_range = area_ranges[areas[area]]
     gt_overlaps = np.zeros(0)
     num_pos = 0
-    for i in range(self.num_images):
+    for i in xrange(self.num_images):
       # Checking for max_overlaps == 1 avoids including crowd annotations
       # (...pretty hacking :/)
       max_gt_overlaps = self.roidb[i]['gt_overlaps'].toarray().max(axis=1)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -229,8 +230,8 @@ class resnet(_fasterRCNN):
 
     if self.pretrained == True:
       print("Loading pretrained weights from %s" %(self.model_path))
-      state_dict = torch.load(self.model_path)
-      resnet.load_state_dict({k:v for k,v in state_dict.items() if k in resnet.state_dict()})
+      pretrained_state_dict = torch.load(self.model_path)
+      resnet.load_state_dict({k:v for k,v in pretrained_state_dict.items() if k in resnet.state_dict()})
 
     # Build resnet.
     self.RCNN_base = nn.Sequential(resnet.conv1, resnet.bn1,resnet.relu, 
