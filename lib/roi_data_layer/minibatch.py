@@ -16,6 +16,8 @@ from scipy.misc import imread
 from model.utils.config import cfg
 from model.utils.blob import prep_im_for_blob, im_list_to_blob
 import pdb
+
+
 def get_minibatch(roidb, num_classes):
   """Given a roidb, construct a minibatch sampled from it."""
   num_images = len(roidb)
@@ -41,9 +43,14 @@ def get_minibatch(roidb, num_classes):
   else:
     # For the COCO ground truth boxes, exclude the ones that are ''iscrowd'' 
     gt_inds = np.where(roidb[0]['gt_classes'] != 0 & np.all(roidb[0]['gt_overlaps'].toarray() > -1.0, axis=1))[0]
-  gt_boxes = np.empty((len(gt_inds), 5), dtype=np.float32)
-  gt_boxes[:, 0:4] = roidb[0]['boxes'][gt_inds, :] * im_scales[0]
-  gt_boxes[:, 4] = roidb[0]['gt_classes'][gt_inds]
+  
+  try: 
+    gt_boxes = np.empty((len(gt_inds), 5), dtype=np.float32)
+    gt_boxes[:, 0:4] = roidb[0]['boxes'][gt_inds, :] * im_scales[0]
+    gt_boxes[:, 4] = roidb[0]['gt_classes'][gt_inds]
+  except Exception as e:
+    print("image :{},{}".format(roidb[0].get("image", None), str(e)))
+     
   blobs['gt_boxes'] = gt_boxes
   blobs['im_info'] = np.array(
     [[im_blob.shape[1], im_blob.shape[2], im_scales[0]]],
@@ -63,14 +70,18 @@ def _get_image_blob(roidb, scale_inds):
   im_scales = []
   for i in range(num_images):
     #im = cv2.imread(roidb[i]['image'])
-    im = imread(roidb[i]['image'])
+    try:
+        im = imread(roidb[i]['image'])
 
-    if len(im.shape) == 2:
-      im = im[:,:,np.newaxis]
-      im = np.concatenate((im,im,im), axis=2)
-    # flip the channel, since the original one using cv2
-    # rgb -> bgr
-    im = im[:,:,::-1]
+        if len(im.shape) == 2:
+          im = im[:,:,np.newaxis]
+          im = np.concatenate((im,im,im), axis=2)
+        # flip the channel, since the original one using cv2
+        # rgb -> bgr
+        im = im[:,:,::-1]
+    except Exception as e:
+        print("{0},image may be damaged".format(roidb[i]['image']))
+        raise
 
     if roidb[i]['flipped']:
       im = im[:, ::-1, :]

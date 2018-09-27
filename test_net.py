@@ -32,8 +32,13 @@ from model.rpn.bbox_transform import bbox_transform_inv
 from model.utils.net_utils import save_net, load_net, vis_detections
 from model.faster_rcnn.vgg16 import vgg16
 from model.faster_rcnn.resnet import resnet
+from model.faster_rcnn.mobilenet import mobilenet
+from model.faster_rcnn.fd_mobilenet import fd_mobilenet
 
 import pdb
+
+import warnings
+warnings.filterwarnings("ignore")
 
 def parse_args():
   """
@@ -47,13 +52,13 @@ def parse_args():
                       help='optional config file',
                       default='cfgs/vgg16.yml', type=str)
   parser.add_argument('--net', dest='net',
-                      help='vgg16, res50, res101, res152',
+                      help='vgg16, res50, res101, res152, mobilenet, fd_mobilenet',
                       default='res101', type=str)
   parser.add_argument('--set', dest='set_cfgs',
                       help='set config keys', default=None,
                       nargs=argparse.REMAINDER)
   parser.add_argument('--load_dir', dest='load_dir',
-                      help='directory to load models', default="/srv/share/jyang375/models",
+                      help='directory to load models', default="data/models",
                       nargs=argparse.REMAINDER)
   parser.add_argument('--cuda', dest='cuda',
                       help='whether use CUDA',
@@ -82,6 +87,13 @@ def parse_args():
   parser.add_argument('--vis', dest='vis',
                       help='visualization mode',
                       action='store_true')  
+  parser.add_argument('--flip', dest='flip',
+                      help='dataset flip or not',
+                      action='store_true', default=False)
+  parser.add_argument('--wm', dest='wm',
+                      help='width multiplier (for mobilenet and fd-mobilenet)',
+                      default=1., type=float)
+
   args = parser.parse_args()
   return args
 
@@ -93,8 +105,8 @@ if __name__ == '__main__':
 
   args = parse_args()
 
-  print('Called with args:')
-  print(args)
+  #print('Called with args:')
+  #print(args)
 
   if torch.cuda.is_available() and not args.cuda:
     print("WARNING: You have a CUDA device, so you should probably run with --cuda")
@@ -120,6 +132,10 @@ if __name__ == '__main__':
       args.imdb_name = "vg_150-50-50_minitrain"
       args.imdbval_name = "vg_150-50-50_minival"
       args.set_cfgs = ['ANCHOR_SCALES', '[4, 8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]']
+  elif args.dataset == "adas":
+      args.imdb_name = "adas_2017_train"
+      args.imdbval_name = "adas_2017_test"
+      args.set_cfgs = ['ANCHOR_SCALES', '[8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]']
 
   args.cfg_file = "cfgs/{}.yml".format(args.net)
 
@@ -128,20 +144,21 @@ if __name__ == '__main__':
   if args.set_cfgs is not None:
     cfg_from_list(args.set_cfgs)
 
-  print('Using config:')
-  pprint.pprint(cfg)
+  #print('Using config:')
+  #pprint.pprint(cfg)
   
-  cfg.TRAIN.USE_FLIPPED = False
+  cfg.TRAIN.USE_FLIPPED = args.flip
   imdb, roidb, ratio_list, ratio_index = combined_roidb(args.imdbval_name, False)
   imdb.competition_mode(on=True)
 
   print('{:d} roidb entries'.format(len(roidb)))
 
+  vGPU = os.environ.get('CUDA_VISIBLE_DEVICES', None)
   input_dir = args.load_dir + "/" + args.net + "/" + args.dataset
   if not os.path.exists(input_dir):
     raise Exception('There is no input directory for loading network from ' + input_dir)
   load_name = os.path.join(input_dir,
-    'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
+    'faster_rcnn_{}_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint, vGPU))
 
   # initilize the network here.
   if args.net == 'vgg16':
@@ -152,6 +169,10 @@ if __name__ == '__main__':
     fasterRCNN = resnet(imdb.classes, 50, pretrained=False, class_agnostic=args.class_agnostic)
   elif args.net == 'res152':
     fasterRCNN = resnet(imdb.classes, 152, pretrained=False, class_agnostic=args.class_agnostic)
+  elif args.net == 'mobilenet':
+    fasterRCNN = mobilenet(args.wm, imdb.classes, pretrained=True, class_agnostic=args.class_agnostic)
+  elif args.net == 'fd_mobilenet':
+    fasterRCNN = fd_mobilenet(args.wm, imdb.classes, pretrained=True, class_agnostic=args.class_agnostic)
   else:
     print("network is not defined")
     pdb.set_trace()
@@ -218,6 +239,7 @@ if __name__ == '__main__':
   _t = {'im_detect': time.time(), 'misc': time.time()}
   det_file = os.path.join(output_dir, 'detections.pkl')
 
+  #Sets the module in evaluation mode.
   fasterRCNN.eval()  
   empty_array = np.transpose(np.array([[],[],[],[],[]]), (1,0))
   for i in range(num_images):
@@ -273,8 +295,9 @@ if __name__ == '__main__':
               cls_boxes = pred_boxes[inds, :]
             else:
               cls_boxes = pred_boxes[inds][:, j * 4:(j + 1) * 4]
-
-            cls_dets = torch.cat((cls_boxes, cls_scores), 1)
+           
+            cls_dets = torch.cat((cls_boxes, cls_scores.unsqueeze(1)), 1)
+            #cls_dets = torch.cat((cls_boxes, cls_scores), 1) #fix bug
             cls_dets = cls_dets[order]
             keep = nms(cls_dets, cfg.TEST.NMS)
             cls_dets = cls_dets[keep.view(-1).long()]
