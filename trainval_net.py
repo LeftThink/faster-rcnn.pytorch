@@ -32,6 +32,8 @@ from model.utils.net_utils import weights_normal_init, save_net, load_net, \
 
 from model.faster_rcnn.vgg16 import vgg16
 from model.faster_rcnn.resnet import resnet
+from model.faster_rcnn.mobilenet import mobilenet
+from model.faster_rcnn.fd_mobilenet import fd_mobilenet
 import pdb
 
 def parse_args():
@@ -59,7 +61,7 @@ def parse_args():
                       default=10000, type=int)
 
   parser.add_argument('--save_dir', dest='save_dir',
-                      help='directory to save models', default="/srv/share/jyang375/models",
+                      help='directory to save models', default="data/models",
                       nargs=argparse.REMAINDER)
   parser.add_argument('--num_workers', dest='num_workers',
                       help='number of worker to load data',
@@ -92,14 +94,14 @@ def parse_args():
                       default=0.1, type=float)
 
 # set training session
-  parser.add_argument('--s', dest='session',
+  parser.add_argument('--session', dest='session',
                       help='training session',
                       default=1, type=int)
 
 # resume trained model
   parser.add_argument('--r', dest='resume',
                       help='resume checkpoint or not',
-                      default=False, type=bool)
+                      default=True, type=bool)
   parser.add_argument('--checksession', dest='checksession',
                       help='checksession to load model',
                       default=1, type=int)
@@ -114,20 +116,25 @@ def parse_args():
                       help='whether use tensorflow tensorboard',
                       default=False, type=bool)
 
+  parser.add_argument('--wm', dest='wm',
+                      help='width multiplier (for mobilenet and fd-mobilenet)',
+                      default=1, type=float)
+
   args = parser.parse_args()
   return args
 
 
 class sampler(Sampler):
   def __init__(self, train_size, batch_size):
-    num_data = train_size
-    self.num_per_batch = int(num_data / batch_size)
+    self.num_data = train_size
+    self.num_per_batch = int(self.num_data / batch_size)
     self.batch_size = batch_size
     self.range = torch.arange(0,batch_size).view(1, batch_size).long()
     self.leftover_flag = False
-    if num_data % batch_size:
-      self.leftover = torch.arange(self.num_per_batch*batch_size, num_data).long()
+    if self.num_data % batch_size:
+      self.leftover = torch.arange(self.num_per_batch*batch_size, self.num_data).long()
       self.leftover_flag = True
+
   def __iter__(self):
     rand_num = torch.randperm(self.num_per_batch).view(-1,1) * self.batch_size
     self.rand_num = rand_num.expand(self.num_per_batch, self.batch_size) + self.range
@@ -140,7 +147,7 @@ class sampler(Sampler):
     return iter(self.rand_num_view)
 
   def __len__(self):
-    return num_data
+    return self.num_data
 
 if __name__ == '__main__':
 
@@ -176,16 +183,20 @@ if __name__ == '__main__':
       args.imdb_name = "vg_150-50-50_minitrain"
       args.imdbval_name = "vg_150-50-50_minival"
       args.set_cfgs = ['ANCHOR_SCALES', '[4, 8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]', 'MAX_NUM_GT_BOXES', '50']
-
+  elif args.dataset == "adas":
+      args.imdb_name = "adas_2017_train"
+      args.imdbval_name = "adas_2017_test"
+      args.set_cfgs = ['ANCHOR_SCALES', '[8, 16, 32]', 'ANCHOR_RATIOS', '[0.5,1,2]', 'MAX_NUM_GT_BOXES', '20']
+        
   args.cfg_file = "cfgs/{}.yml".format(args.net)
-
+	
   if args.cfg_file is not None:
     cfg_from_file(args.cfg_file)
   if args.set_cfgs is not None:
     cfg_from_list(args.set_cfgs)
 
-  print('Using config:')
-  pprint.pprint(cfg)
+  #print('Using config:')
+  #pprint.pprint(cfg)
   np.random.seed(cfg.RNG_SEED)
 
   #torch.backends.cudnn.benchmark = True
@@ -219,7 +230,6 @@ if __name__ == '__main__':
   num_boxes = torch.LongTensor(1)
   gt_boxes = torch.FloatTensor(1)
 
-
   # ship to cuda
   if args.cuda:
     im_data = im_data.cuda()
@@ -245,6 +255,10 @@ if __name__ == '__main__':
     fasterRCNN = resnet(imdb.classes, 50, pretrained=True, class_agnostic=args.class_agnostic)
   elif args.net == 'res152':
     fasterRCNN = resnet(imdb.classes, 152, pretrained=True, class_agnostic=args.class_agnostic)
+  elif args.net == 'mobilenet':
+    fasterRCNN = mobilenet(args.wm, imdb.classes, pretrained=True, class_agnostic=args.class_agnostic)
+  elif args.net == 'fd_mobilenet':
+    fasterRCNN = fd_mobilenet(args.wm, imdb.classes, pretrained=True, class_agnostic=args.class_agnostic)
   else:
     print("network is not defined")
     pdb.set_trace()
@@ -275,16 +289,20 @@ if __name__ == '__main__':
   if args.resume:
     load_name = os.path.join(output_dir,
       'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
-    print("loading checkpoint %s" % (load_name))
-    checkpoint = torch.load(load_name)
-    args.session = checkpoint['session']
-    args.start_epoch = checkpoint['epoch']
-    fasterRCNN.load_state_dict(checkpoint['model'])
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    lr = optimizer.param_groups[0]['lr']
-    if 'pooling_mode' in checkpoint.keys():
-      cfg.POOLING_MODE = checkpoint['pooling_mode']
-    print("loaded checkpoint %s" % (load_name))
+    if os.path.exists(load_name):
+        print("loading checkpoint %s" % (load_name))
+             
+        checkpoint = torch.load(load_name)
+        args.session = checkpoint['session']
+        args.start_epoch = checkpoint['epoch']
+        fasterRCNN.load_state_dict(checkpoint['model'])
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        lr = optimizer.param_groups[0]['lr']
+        if 'pooling_mode' in checkpoint.keys():
+          cfg.POOLING_MODE = checkpoint['pooling_mode']
+        print("loaded checkpoint %s" % (load_name))
+    else:
+        print("checkpoint {} not exist,skip".format(load_name))
 
   if args.mGPUs:
     fasterRCNN = nn.DataParallel(fasterRCNN)
@@ -294,6 +312,7 @@ if __name__ == '__main__':
 
   iters_per_epoch = int(train_size / args.batch_size)
 
+  print("start to train")
   for epoch in range(args.start_epoch, args.max_epochs):
     # setting to train mode
     fasterRCNN.train()
@@ -344,8 +363,8 @@ if __name__ == '__main__':
           fg_cnt = fasterRCNN.fg_cnt
           bg_cnt = fasterRCNN.bg_cnt
 
-        print("[session %d][epoch %2d][iter %4d] loss: %.4f, lr: %.2e" \
-                                % (args.session, epoch, step, loss_temp, lr))
+        print("[session %d][epoch %2d][iter %4d/%4d] loss: %.4f, lr: %.2e" \
+                                % (args.session, epoch, step, iters_per_epoch, loss_temp, lr))
         print("\t\t\tfg/bg=(%d/%d), time cost: %f" % (fg_cnt, bg_cnt, end-start))
         print("\t\t\trpn_cls: %.4f, rpn_box: %.4f, rcnn_cls: %.4f, rcnn_box %.4f" \
                       % (loss_rpn_cls, loss_rpn_box, loss_rcnn_cls, loss_rcnn_box))
