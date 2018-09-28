@@ -46,6 +46,7 @@ def parse_args():
   Parse input arguments
   """
   parser = argparse.ArgumentParser(description='Train a Fast R-CNN network')
+  parser.add_argument('exp_name', type=str, default=None, help='experiment name')
   parser.add_argument('--dataset', dest='dataset',
                       help='training dataset',
                       default='pascal_voc', type=str)
@@ -61,9 +62,6 @@ def parse_args():
   parser.add_argument('--disp_interval', dest='disp_interval',
                       help='number of iterations to display',
                       default=100, type=int)
-  parser.add_argument('--checkpoint_interval', dest='checkpoint_interval',
-                      help='number of iterations to display',
-                      default=10000, type=int)
 
   parser.add_argument('--save_dir', dest='save_dir',
                       help='directory to save models', default="data/models",
@@ -106,7 +104,7 @@ def parse_args():
 # resume trained model
   parser.add_argument('--r', dest='resume',
                       help='resume checkpoint or not',
-                      default=True, type=bool)
+                      action='store_true', default=False)
   
   parser.add_argument('--flip', dest='flip',
                       help='dataset flip or not',
@@ -220,8 +218,12 @@ if __name__ == '__main__':
   train_size = len(roidb)
 
   print('{:d} roidb entries'.format(len(roidb)))
+  
+  if args.exp_name is None:
+    output_dir = args.save_dir + "/" + args.net + "/" + args.dataset
+  else:
+    output_dir = args.save_dir + "/" + args.net + "/" + args.dataset + "/" + args.exp_name
 
-  output_dir = args.save_dir + "/" + args.net + "/" + args.dataset
   if not os.path.exists(output_dir):
     os.makedirs(output_dir)
 
@@ -297,20 +299,18 @@ if __name__ == '__main__':
   elif args.optimizer == "sgd":
     optimizer = torch.optim.SGD(params, momentum=cfg.TRAIN.MOMENTUM)
 
-  vGPU = os.environ.get('CUDA_VISIBLE_DEVICES', None)
-
   if args.resume:
     load_name = os.path.join(output_dir,
-      'faster_rcnn_{}_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint, vGPU))
+      'faster_rcnn_{}_{}_{}.pth'.format(args.checksession, args.checkepoch, args.checkpoint))
     if os.path.exists(load_name):
         print("loading checkpoint %s" % (load_name))
              
         checkpoint = torch.load(load_name)
-        #args.session = checkpoint['session']
-        #args.start_epoch = checkpoint['epoch']
+        args.session = checkpoint['session']
+        args.start_epoch = checkpoint['epoch']
         fasterRCNN.load_state_dict(checkpoint['model'])
         optimizer.load_state_dict(checkpoint['optimizer'])
-        lr = optimizer.param_groups[0]['lr']
+        #lr = optimizer.param_groups[0]['lr']
         if 'pooling_mode' in checkpoint.keys():
           cfg.POOLING_MODE = checkpoint['pooling_mode']
         print("loaded checkpoint %s" % (load_name))
@@ -337,7 +337,13 @@ if __name__ == '__main__':
         lr *= args.lr_decay_gamma
 
     data_iter = iter(dataloader)
-    for step in range(iters_per_epoch):
+
+    if epoch == args.start_epoch:
+        start_step = args.checkpoint + 1
+    else:
+        start_step = 0
+
+    for step in range(start_step, iters_per_epoch):
       data = data_iter.next()
       im_data.data.resize_(data[0].size()).copy_(data[0])
       im_info.data.resize_(data[1].size()).copy_(data[1])
@@ -396,7 +402,7 @@ if __name__ == '__main__':
         start = time.time()
         
         # temp
-        save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}_{}.pth'.format(args.session, epoch, step, vGPU))
+        save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
         save_checkpoint({
           'session': args.session,
           'epoch': epoch,
@@ -408,20 +414,20 @@ if __name__ == '__main__':
         print('save model: {}'.format(save_name))
 
     if args.mGPUs:
-      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}_{}.pth'.format(args.session, epoch, step, vGPU))
+      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
       save_checkpoint({
         'session': args.session,
-        'epoch': epoch,
+        'epoch': epoch + 1,
         'model': fasterRCNN.module.state_dict(),
         'optimizer': optimizer.state_dict(),
         'pooling_mode': cfg.POOLING_MODE,
         'class_agnostic': args.class_agnostic,
       }, save_name)
     else:
-      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}_{}.pth'.format(args.session, epoch, step, vGPU))
+      save_name = os.path.join(output_dir, 'faster_rcnn_{}_{}_{}.pth'.format(args.session, epoch, step))
       save_checkpoint({
         'session': args.session,
-        'epoch': epoch,
+        'epoch': epoch + 1,
         'model': fasterRCNN.state_dict(),
         'optimizer': optimizer.state_dict(),
         'pooling_mode': cfg.POOLING_MODE,

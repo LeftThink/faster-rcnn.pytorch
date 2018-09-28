@@ -60,8 +60,8 @@ __C.TRAIN.SUMMARY_INTERVAL = 180
 
 # Scale to use during training (can list multiple scales)
 # The scale is the pixel size of an image's shortest side
-#__C.TRAIN.SCALES = (600,)
-__C.TRAIN.SCALES = (224,)
+__C.TRAIN.SCALES = (600,)
+# __C.TRAIN.SCALES = (224,)
 
 # Max pixel size of the longest side of a scaled input image
 __C.TRAIN.MAX_SIZE = 1000
@@ -159,15 +159,21 @@ __C.TRAIN.USE_ALL_GT = True
 # Whether to tune the batch normalization parameters during training
 __C.TRAIN.BN_TRAIN = False
 
+# For ADAS
+__C.TRAIN.RPN_MIN_AREA = 0
+#__C.TRAIN.CLASSES = ('__background__', 'car',)
+__C.TRAIN.CLASSES = ('__background__', 'o','s','w',)
+
 #
 # Testing options
 #
 __C.TEST = edict()
+__C.TEST.RPN_MIN_AREA = 0
 
 # Scale to use during testing (can NOT list multiple scales)
 # The scale is the pixel size of an image's shortest side
-#__C.TEST.SCALES = (600,)
-__C.TEST.SCALES = (224,)
+__C.TEST.SCALES = (600,)
+#__C.TEST.SCALES = (224,)
 
 # Max pixel size of the longest side of a scaled input image
 __C.TEST.MAX_SIZE = 1000

@@ -11,6 +11,9 @@ import xml.etree.ElementTree as ET
 import os
 import pickle
 import numpy as np
+import pdb
+import cv2
+import datetime
 
 def parse_rec(filename):
   """ Parse a PASCAL VOC xml file """
@@ -57,7 +60,7 @@ def adas_ap(rec, prec, use_07_metric=False):
     # first append sentinel values at the end
     mrec = np.concatenate(([0.], rec, [1.]))
     mpre = np.concatenate(([0.], prec, [0.]))
-
+    
     # compute the precision envelope
     for i in range(mpre.size - 1, 0, -1):
       mpre[i - 1] = np.maximum(mpre[i - 1], mpre[i])
@@ -72,6 +75,7 @@ def adas_ap(rec, prec, use_07_metric=False):
 
 
 def adas_eval(detpath,
+             imagepath,
              annopath,
              imagesetfile,
              classname,
@@ -79,6 +83,7 @@ def adas_eval(detpath,
              ovthresh=0.5,
              use_07_metric=False):
   """rec, prec, ap = adas_eval(detpath,
+                              imagepath,
                               annopath,
                               imagesetfile,
                               classname,
@@ -145,10 +150,11 @@ def adas_eval(detpath,
     class_recs[imagename] = {'bbox': bbox,
                              'difficult': difficult,
                              'det': det}
-
+  
   # read dets
   detfile = detpath.format(classname)
   with open(detfile, 'r') as f:
+    print('read detfile {}'.format(detfile))
     lines = f.readlines()
 
   splitlines = [x.strip().split(' ') for x in lines]
@@ -159,7 +165,11 @@ def adas_eval(detpath,
   nd = len(image_ids)
   tp = np.zeros(nd)
   fp = np.zeros(nd)
+  iou = np.zeros(nd)
+  l1 = np.zeros((nd,4))
+  area = np.zeros(nd)
 
+  fpbbs = {}
   if BB.shape[0] > 0:
     # sort by confidence
     sorted_ind = np.argsort(-confidence)
@@ -173,6 +183,7 @@ def adas_eval(detpath,
       bb = BB[d, :].astype(float)
       ovmax = -np.inf
       BBGT = R['bbox'].astype(float)
+      area[d] = (bb[2] - bb[0] + 1)*(bb[3] - bb[1] + 1)
 
       if BBGT.size > 0:
         # compute overlaps
@@ -194,23 +205,59 @@ def adas_eval(detpath,
         ovmax = np.max(overlaps)
         jmax = np.argmax(overlaps)
 
+      iou[d] = 0.0 if ovmax == -np.inf else ovmax
       if ovmax > ovthresh:
         if not R['difficult'][jmax]:
           if not R['det'][jmax]:
             tp[d] = 1.
             R['det'][jmax] = 1
+            l1[d] = np.absolute(BBGT[jmax] - bb)
           else:
             fp[d] = 1.
       else:
         fp[d] = 1.
+      
+      if fp[d]:
+          if fpbbs.get(image_ids[d]) is None:
+            fpbbs[image_ids[d]] = [bb] 
+          else:
+            fpbbs[image_ids[d]].append(bb)
+
+    vis_fp(imagepath, fpbbs)
 
   # compute precision recall
-  fp = np.cumsum(fp)
-  tp = np.cumsum(tp)
-  rec = tp / float(npos)
+  fp_c = np.cumsum(fp)
+  tp_c = np.cumsum(tp)
+  l1_c = np.cumsum(l1, axis=0)
+  rec = tp_c / float(npos)
+
   # avoid divide by zero in case the first detection matches a difficult
   # ground truth
-  prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
+  prec = tp_c / np.maximum(tp_c + fp_c, np.finfo(np.float64).eps)
   ap = adas_ap(rec, prec, use_07_metric)
 
+  now = datetime.datetime.now().strftime('%m%d%H%M')
+  with open('eval_{}.txt'.format(now),'w') as out:
+    for i in range(nd):
+      tp_l1_mean = l1_c[i]/tp_c[i]
+      out.write("gt: %d tp: %d fp: %d iou: %.3f area: %-5d tp_c: %-4d fp_c: %-4d score: %.3f pre: %.3f rec: %.3f, l1_x0: %.3f, l1_y0: %.3f, l1_x1: %.3f, l1_y2:%.3f, image: %-20s\n" \
+          % (npos, tp[i], fp[i], iou[i], int(area[i]), tp_c[i], fp_c[i], -sorted_scores[i], prec[i], rec[i], tp_l1_mean[0], tp_l1_mean[1], tp_l1_mean[2], tp_l1_mean[3], os.path.basename(image_ids[i])))
+      '''
+      out.write("gt: %d tp: %d fp: %d iou: %.3f tp_c: %-4d fp_c: %-4d score: %.3f pre: %.3f rec: %.3f, l1_x0: %.3f, l1_y0: %.3f, l1_x1: %.3f, l1_y2:%.3f\n" \
+          % (npos, tp[i], fp[i], iou[i], tp_c[i], fp_c[i], -sorted_scores[i], prec[i], rec[i], tp_l1_mean[0], tp_l1_mean[1], tp_l1_mean[2], tp_l1_mean[3]))
+      '''
+
   return rec, prec, ap
+
+def vis_fp(imagepath, fpbbs):
+    if not os.path.exists('fps'):
+        os.mkdir('fps')
+
+    for image_id in fpbbs:
+        image_path = imagepath.format(image_id)
+        image_name = os.path.basename(image_path)
+        img = cv2.imread(image_path)
+        for bb in fpbbs[image_id]:
+            x_lt,y_lt,x_rb,y_rb = [int(e) for e in bb[0:4]]
+            cv2.rectangle(img, (x_lt,y_lt), (x_rb,y_rb), (0,255,0), 1)
+        cv2.imwrite(os.path.join('fps', image_name), img)

@@ -27,7 +27,8 @@ from .adas_eval import adas_eval
 # TODO: make fast_rcnn irrelevant
 # >>>> obsolete, because it depends on sth outside of this project
 from model.utils.config import cfg
-
+import pdb
+import datetime
 
 # <<<< obsolete
 
@@ -40,8 +41,9 @@ class adas(imdb):
         self._devkit_path = self._get_default_path() if devkit_path is None \
             else devkit_path
         self._data_path = os.path.join(self._devkit_path, 'ADAS' + self._year)
-        self._classes = ('__background__', #always index 0
-                        'car',)
+
+        self._classes = cfg.TRAIN.CLASSES
+
         self._class_to_ind = dict(zip(self.classes, xrange(self.num_classes)))
 
         self._image_ext = '.jpg'
@@ -265,21 +267,35 @@ class adas(imdb):
         for cls_ind, cls in enumerate(self.classes):
             if cls == '__background__':
                 continue
-            print 'Writing {} ADAS results file'.format(cls)
             filename = self._get_adas_results_file_template().format(cls)
+            print 'Writing {} ADAS results file {}'.format(cls, filename)
             with open(filename, 'wt') as f:
                 for im_ind, index in enumerate(self.image_index):
                     dets = all_boxes[cls_ind][im_ind]
                     if dets == []:
                         continue
                     # the ADASdevkit expects 1-based indices
+                    # pdb.set_trace()
                     for k in xrange(dets.shape[0]):
+
+                        w = (dets[k,2] - dets[k,0] + 1.)
+                        h = (dets[k,3] - dets[k,1] + 1.)
+                        area = w * h
+                        if area < cfg.TEST.RPN_MIN_AREA:
+                            print('area:%-5d min_area:%-5d image_index: %s' % (area, cfg.TEST.RPN_MIN_AREA, index)) 
+                            continue
+
                         f.write('{:s} {:.3f} {:.1f} {:.1f} {:.1f} {:.1f}\n'.
                                 format(index, dets[k, -1],
                                        dets[k, 0] + 1, dets[k, 1] + 1,
                                        dets[k, 2] + 1, dets[k, 3] + 1))
 
     def _do_python_eval(self, output_dir='output'):
+        imagepath = os.path.join(
+            self._devkit_path,
+            'ADAS' + self._year,
+            'JPEGImages',
+            '{:s}.jpg')
         annopath = os.path.join(
             self._devkit_path,
             'ADAS' + self._year,
@@ -301,25 +317,28 @@ class adas(imdb):
                 continue
             filename = self._get_adas_results_file_template().format(cls)
             rec, prec, ap = adas_eval(
-                filename, annopath, imagesetfile, cls, cachedir, ovthresh=0.5)
+                filename, imagepath, annopath, imagesetfile, cls, cachedir, ovthresh=0.5)
             aps += [ap]
             print('AP for {} = {:.4f}'.format(cls, ap))
             with open(os.path.join(output_dir, cls + '_pr.pkl'), 'w') as f:
                 cPickle.dump({'rec': rec, 'prec': prec, 'ap': ap}, f)
-        print('Mean AP = {:.4f}'.format(np.mean(aps)))
-        print('~~~~~~~~')
-        print('Results:')
+        s = 'Mean AP = {:.4f}\n'.format(np.mean(aps))
+        s += '~~~~~~~~\n'
+        s += 'Results:\n'
         for ap in aps:
-            print('{:.3f}'.format(ap))
-        print('{:.3f}'.format(np.mean(aps)))
-        print('~~~~~~~~')
-        print('')
-        print('--------------------------------------------------------------')
-        print('Results computed with the **unofficial** Python eval code.')
-        print('Results should be very close to the official MATLAB eval code.')
-        print('Recompute with `./tools/reval.py --matlab ...` for your paper.')
-        print('-- Thanks, The Management')
-        print('--------------------------------------------------------------')
+            s += '{:.3f}\n'.format(ap)
+        s += '{:.3f}\n'.format(np.mean(aps))
+        s += '~~~~~~~~\n'
+        s += '--------------------------------------------------------------\n'
+        s += 'Results computed with the **unofficial** Python eval code.\n'
+        s += 'Results should be very close to the official MATLAB eval code.\n'
+        s += 'Recompute with `./tools/reval.py --matlab ...` for your paper.\n'
+        s += '-- Thanks, The Management\n'
+        s += '--------------------------------------------------------------\n'
+        print(s)
+        now = datetime.datetime.now().strftime('%m%d%H%M')
+        with open('eval_result_{}.txt'.format(now), 'w') as fp:
+            fp.write(s)
 
     def _do_matlab_eval(self, output_dir='output'):
         print '-----------------------------------------------------'
